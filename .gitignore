@@ -25,3 +25,5 @@ mkinstalldirs
 modules/
 run-tests.php
 *.lo
+.deps
+config.log
