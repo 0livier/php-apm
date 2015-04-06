@@ -38,6 +38,9 @@
 #include "php.h"
 #include "php_ini.h"
 #include "zend_exceptions.h"
+#if PHP_VERSION_ID >= 70000
+# include "zend_errors.h"
+#endif
 #include "php_apm.h"
 #include "backtrace.h"
 #include "ext/standard/info.h"
@@ -103,9 +106,13 @@ length) {
 	return length;
 }
 
+#if PHP_VERSION_ID >= 70000
+void apm_log_hook(ZEND_ERROR_CB_HOOK_ARGS);
+#else
 void (*old_error_cb)(int type, const char *error_filename, const uint error_lineno, const char *format, va_list args);
 
 void apm_error_cb(int type, const char *error_filename, const uint error_lineno, const char *format, va_list args);
+#endif
 
 void apm_throw_exception_hook(zval *exception TSRMLS_DC);
 
@@ -289,8 +296,9 @@ PHP_MINIT_FUNCTION(apm)
 	REGISTER_INI_ENTRIES();
 
 	/* Storing actual error callback function for later restore */
+#if PHP_VERSION_ID < 70000
 	old_error_cb = zend_error_cb;
-
+#endif
 	/* Initialize the storage drivers */
 	if (APM_G(enabled)) {
 		/* Overload the ZEND_BEGIN_SILENCE / ZEND_END_SILENCE opcodes */
@@ -307,8 +315,10 @@ PHP_MINIT_FUNCTION(apm)
 			}
 		}
 
+#if PHP_VERSION_ID < 70000
 		/* Since xdebug looks for zend_error_cb in his MINIT, we change it once more so he can get our address */
 		zend_error_cb = apm_error_cb;
+#endif
 		zend_throw_exception_hook = apm_throw_exception_hook;
 
 	}
@@ -331,8 +341,10 @@ PHP_MSHUTDOWN_FUNCTION(apm)
 		}
 	}
 
+#if PHP_VERSION_ID < 70000
 	/* Restoring saved error callback function */
 	zend_error_cb = old_error_cb;
+#endif
 
 	return SUCCESS;
 }
@@ -365,7 +377,12 @@ PHP_RINIT_FUNCTION(apm)
 
 		APM_DEBUG("Replacing handlers\n");
 		/* Replacing current error callback function with apm's one */
+#if PHP_VERSION_ID >= 70000
+		zend_add_error_hook(E_HOOK_LOG, &apm_log_hook);
+#else
 		zend_error_cb = apm_error_cb;
+#endif
+
 		zend_throw_exception_hook = apm_throw_exception_hook;
 	}
 	return SUCCESS;
@@ -429,9 +446,11 @@ PHP_RSHUTDOWN_FUNCTION(apm)
 			}
 		}
 
-		/* Restoring saved error callback function */
 		APM_DEBUG("Restoring handlers\n");
+#if PHP_VERSION_ID < 70000
+		/* Restoring saved error callback function */
 		zend_error_cb = old_error_cb;
+#endif
 		zend_throw_exception_hook = NULL;
 
 		smart_str_free(&APM_RD(cookies));
@@ -453,6 +472,12 @@ PHP_MINFO_FUNCTION(apm)
 	DISPLAY_INI_ENTRIES();
 }
 
+#if PHP_VERSION_ID >= 70000
+void apm_log_hook(ZEND_ERROR_CB_HOOK_ARGS)
+{
+    process_event(APM_EVENT_ERROR, type, (char *) error_filename, error_lineno, PG(last_error_message));
+}
+#else
 /* {{{ void apm_error(int type, const char *format, ...)
 	This function provides a hook for error */
 void apm_error_cb(int type, const char *error_filename, const uint error_lineno, const char *format, va_list args)
@@ -474,6 +499,8 @@ void apm_error_cb(int type, const char *error_filename, const uint error_lineno,
 	old_error_cb(type, error_filename, error_lineno, format, args);
 }
 /* }}} */
+#endif
+
 
 
 void apm_throw_exception_hook(zval *exception TSRMLS_DC)
